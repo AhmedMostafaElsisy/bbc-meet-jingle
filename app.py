@@ -506,5 +506,17 @@ class BBCMeetJingleApp(rumps.App):
         rumps.quit_application()
 
 
+def _hide_dock_icon() -> None:
+    """Hide the Python icon from the Dock (LSUIElement = True)."""
+    try:
+        from AppKit import NSApplication, NSApplicationActivationPolicyAccessory
+        NSApplication.sharedApplication().setActivationPolicy_(
+            NSApplicationActivationPolicyAccessory
+        )
+    except ImportError:
+        pass  # pyobjc not available — Dock icon will show
+
+
 if __name__ == "__main__":
+    _hide_dock_icon()
     BBCMeetJingleApp().run()
