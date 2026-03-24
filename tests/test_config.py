@@ -59,3 +59,26 @@ class TestConfig:
     def test_volume_presets_values_in_range(self):
         for label, vol in config.VOLUME_PRESETS.items():
             assert 0.0 <= vol <= 1.0, f"Volume '{label}' out of range: {vol}"
+
+    def test_allowed_audio_extensions(self):
+        assert ".mp3" in config.ALLOWED_AUDIO_EXTENSIONS
+        assert ".wav" in config.ALLOWED_AUDIO_EXTENSIONS
+        assert ".ogg" in config.ALLOWED_AUDIO_EXTENSIONS
+        assert ".m4a" in config.ALLOWED_AUDIO_EXTENSIONS
+
+    def test_urgent_seconds(self):
+        assert config.URGENT_SECONDS == 10
+
+    def test_live_timeout_seconds(self):
+        assert config.LIVE_TIMEOUT_SECONDS == 120
+
+    def test_default_work_schedule(self):
+        assert config.DEFAULT_WORK_START == "09:00"
+        assert config.DEFAULT_WORK_END == "18:00"
+        assert config.DEFAULT_WORK_DAYS == [0, 1, 2, 3, 4]
+
+    def test_snooze_options(self):
+        assert "30 minutes" in config.SNOOZE_OPTIONS
+        assert "1 hour" in config.SNOOZE_OPTIONS
+        assert "2 hours" in config.SNOOZE_OPTIONS
+        assert "Until tomorrow" in config.SNOOZE_OPTIONS

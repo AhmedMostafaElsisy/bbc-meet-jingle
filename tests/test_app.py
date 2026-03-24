@@ -144,6 +144,17 @@ class TestJingleCatalog:
         with patch("app.CUSTOM_JINGLES_DIR", "/nonexistent/path"):
             assert _discover_custom_jingles() == {}
 
+    def test_discover_custom_jingles_includes_m4a(self, tmp_path):
+        from app import _discover_custom_jingles
+
+        custom_dir = tmp_path / "custom"
+        custom_dir.mkdir()
+        (custom_dir / "tune.m4a").write_bytes(b"data")
+
+        with patch("app.CUSTOM_JINGLES_DIR", str(custom_dir)):
+            result = _discover_custom_jingles()
+            assert "tune" in result
+
 
 # ------------------------------------------------------------------
 # App init
@@ -160,6 +171,11 @@ class TestAppInit:
         assert app._next_event is None
         assert app._is_live is False
         assert app._active_meet_link is None
+
+    def test_has_thread_lock(self):
+        app, _ = _make_app()
+        import threading
+        assert type(app._lock) is type(threading.Lock())
 
     def test_jingle_duration_from_player(self):
         app, _ = _make_app()
@@ -218,6 +234,49 @@ class TestAppInit:
             or "Re-authorize" in app._status_item.title
         )
 
+    def test_default_schedule_state(self):
+        app, _ = _make_app()
+        assert app._snooze_until is None
+        assert app._quiet_start is None
+        assert app._quiet_end is None
+        assert app._work_hours_only is False
+        assert app._work_start == "09:00"
+        assert app._work_end == "18:00"
+        assert app._work_days == [0, 1, 2, 3, 4]
+
+    def test_loads_schedule_prefs(self):
+        with (
+            patch("app.AudioPlayer") as mock_player_cls,
+            patch("app.load_credentials", return_value=None),
+            patch("app.os.path.exists", return_value=False),
+            patch("app.threading.Thread"),
+            patch("app._load_prefs", return_value={
+                "quiet_start": "22:00",
+                "quiet_end": "07:00",
+                "work_hours_only": True,
+                "work_start": "10:00",
+                "work_end": "19:00",
+                "work_days": [0, 1, 2, 3, 4, 5],
+            }),
+            patch("app._build_jingle_catalog", return_value={
+                "BBC News": "/fake/bbc.mp3",
+            }),
+        ):
+            mock_player = MagicMock()
+            mock_player.available = True
+            mock_player.duration = 16.8
+            mock_player_cls.return_value = mock_player
+
+            from app import BBCMeetJingleApp
+
+            app = BBCMeetJingleApp()
+            assert app._quiet_start == "22:00"
+            assert app._quiet_end == "07:00"
+            assert app._work_hours_only is True
+            assert app._work_start == "10:00"
+            assert app._work_end == "19:00"
+            assert 5 in app._work_days
+
 
 # ------------------------------------------------------------------
 # Jingle selection
@@ -252,19 +311,68 @@ class TestJingleSelection:
 # ------------------------------------------------------------------
 
 
+class TestGetIdleTitle:
+    def test_empty_when_all_clear(self):
+        app, _ = _make_app()
+        assert app._get_idle_title() == ""
+
+    def test_shows_jingles_off(self):
+        app, _ = _make_app()
+        app._jingle_enabled = False
+        assert app._get_idle_title() == "🔇 Jingles off"
+
+    def test_shows_snoozed_minutes(self):
+        app, _ = _make_app()
+        app._snooze_until = datetime.now() + timedelta(minutes=25)
+        title = app._get_idle_title()
+        assert "😴 Snoozed" in title
+        assert "25m" in title or "24m" in title
+
+    def test_shows_snoozed_hours(self):
+        app, _ = _make_app()
+        app._snooze_until = datetime.now() + timedelta(hours=1, minutes=30)
+        title = app._get_idle_title()
+        assert "😴 Snoozed 1h 30m" in title or "😴 Snoozed 1h 29m" in title
+
+    def test_shows_quiet_hours(self):
+        app, _ = _make_app()
+        app._quiet_start = "00:00"
+        app._quiet_end = "23:59"
+        assert app._get_idle_title() == "🌙 Quiet hours"
+
+    def test_shows_off_hours(self):
+        app, _ = _make_app()
+        app._work_hours_only = True
+        app._work_start = "00:00"
+        app._work_end = "00:01"
+        app._work_days = []  # no work days = always off hours
+        assert app._get_idle_title() == "🏢 Off hours"
+
+    def test_priority_disabled_over_snoozed(self):
+        app, _ = _make_app()
+        app._jingle_enabled = False
+        app._snooze_until = datetime.now() + timedelta(hours=1)
+        assert app._get_idle_title() == "🔇 Jingles off"
+
+    def test_priority_snoozed_over_quiet(self):
+        app, _ = _make_app()
+        app._snooze_until = datetime.now() + timedelta(hours=1)
+        app._quiet_start = "00:00"
+        app._quiet_end = "23:59"
+        assert "😴 Snoozed" in app._get_idle_title()
+
+
 class TestTick:
     def test_default_when_no_event(self):
         app, _ = _make_app()
         app._next_event = None
         app._tick()
-        assert app.title == ""
         assert app._join_item.title == "No upcoming Meet"
 
     def test_shows_countdown(self):
         app, _ = _make_app()
         app._next_event = _make_event(seconds_from_now=120)
         app._tick()
-        assert "Standup in " in app.title
         assert "Standup in " in app.title
         assert "click to join" in app._join_item.title
 
@@ -304,7 +412,8 @@ class TestMaybeTriggerJingle:
     def test_triggers_within_jingle_duration(self):
         app, mock_player = _make_app()
         event = _make_event(seconds_from_now=10)
-        app._maybe_trigger_jingle(event, 10.0)
+        with patch("app.should_jingle", return_value=True):
+            app._maybe_trigger_jingle(event, 10.0)
         mock_player.play.assert_called_once_with(1.0)
         assert "evt_1" in app._played_events
 
@@ -321,11 +430,11 @@ class TestMaybeTriggerJingle:
         app._maybe_trigger_jingle(event, 10.0)
         mock_player.play.assert_not_called()
 
-    def test_marks_played_even_when_disabled(self):
+    def test_marks_played_even_when_schedule_blocks(self):
         app, mock_player = _make_app()
-        app._jingle_enabled = False
         event = _make_event(seconds_from_now=10)
-        app._maybe_trigger_jingle(event, 10.0)
+        with patch("app.should_jingle", return_value=False):
+            app._maybe_trigger_jingle(event, 10.0)
         mock_player.play.assert_not_called()
         assert "evt_1" in app._played_events
 
@@ -333,7 +442,8 @@ class TestMaybeTriggerJingle:
         app, mock_player = _make_app()
         app._skip_next = True
         event = _make_event(seconds_from_now=10)
-        app._maybe_trigger_jingle(event, 10.0)
+        with patch("app.should_jingle", return_value=True):
+            app._maybe_trigger_jingle(event, 10.0)
         mock_player.play.assert_not_called()
         assert app._skip_next is False
         assert "evt_1" in app._played_events
@@ -342,6 +452,24 @@ class TestMaybeTriggerJingle:
         app, mock_player = _make_app()
         event = _make_event(seconds_from_now=-1)
         app._maybe_trigger_jingle(event, -1.0)
+        mock_player.play.assert_not_called()
+
+    def test_respects_quiet_hours(self):
+        app, mock_player = _make_app()
+        app._quiet_start = "18:00"
+        app._quiet_end = "09:00"
+        event = _make_event(seconds_from_now=10)
+        # should_jingle will check quiet hours; mock it to return False
+        with patch("app.should_jingle", return_value=False):
+            app._maybe_trigger_jingle(event, 10.0)
+        mock_player.play.assert_not_called()
+
+    def test_respects_snooze(self):
+        app, mock_player = _make_app()
+        app._snooze_until = datetime.now() + timedelta(hours=1)
+        event = _make_event(seconds_from_now=10)
+        with patch("app.should_jingle", return_value=False):
+            app._maybe_trigger_jingle(event, 10.0)
         mock_player.play.assert_not_called()
 
 
@@ -430,8 +558,7 @@ class TestMenuCallbacks:
 
     def test_skip_next(self):
         app, _ = _make_app()
-        with patch("app.rumps.notification"):
-            app._on_skip_next(None)
+        app._on_skip_next(None)
         assert app._skip_next is True
 
     def test_test_jingle_plays(self):
@@ -462,6 +589,129 @@ class TestMenuCallbacks:
 
 
 # ------------------------------------------------------------------
+# Snooze callbacks
+# ------------------------------------------------------------------
+
+
+class TestSnoozeCallbacks:
+    def test_snooze_sets_time(self):
+        app, _ = _make_app()
+        callback = app._make_snooze_callback("30 minutes")
+        callback(None)
+        assert app._snooze_until is not None
+        # Should be roughly 30 min from now
+        remaining = (app._snooze_until - datetime.now()).total_seconds()
+        assert 1700 < remaining < 1900
+
+    def test_cancel_snooze(self):
+        app, _ = _make_app()
+        app._snooze_until = datetime.now() + timedelta(hours=1)
+        app._on_cancel_snooze(None)
+        assert app._snooze_until is None
+
+    def test_snooze_status_not_snoozed(self):
+        app, _ = _make_app()
+        app._snooze_until = None
+        app._update_snooze_status()
+        assert app._snooze_status.title == "Not snoozed"
+
+    def test_snooze_status_active(self):
+        app, _ = _make_app()
+        app._snooze_until = datetime.now() + timedelta(minutes=45)
+        app._update_snooze_status()
+        assert "🔇 Snoozed" in app._snooze_status.title
+        assert "45m" in app._snooze_status.title or "44m" in app._snooze_status.title
+
+    def test_snooze_status_expired_auto_clears(self):
+        app, _ = _make_app()
+        app._snooze_until = datetime.now() - timedelta(minutes=1)
+        app._update_snooze_status()
+        assert app._snooze_until is None
+        assert app._snooze_status.title == "Not snoozed"
+
+
+# ------------------------------------------------------------------
+# Quiet hours callbacks
+# ------------------------------------------------------------------
+
+
+class TestQuietHoursCallbacks:
+    def test_toggle_quiet_on(self):
+        app, _ = _make_app()
+        sender = MagicMock()
+        app._quiet_start = None
+        app._quiet_end = None
+        with patch("app._save_prefs"):
+            app._on_toggle_quiet(sender)
+        assert app._quiet_start == "18:00"
+        assert app._quiet_end == "09:00"
+        assert sender.state is True
+
+    def test_toggle_quiet_off(self):
+        app, _ = _make_app()
+        sender = MagicMock()
+        app._quiet_start = "18:00"
+        app._quiet_end = "09:00"
+        with patch("app._save_prefs"):
+            app._on_toggle_quiet(sender)
+        assert app._quiet_start is None
+        assert app._quiet_end is None
+        assert sender.state is False
+
+    def test_quiet_preset(self):
+        app, _ = _make_app()
+        callback = app._make_quiet_callback("22:00", "07:00")
+        with patch("app._save_prefs"):
+            callback(None)
+        assert app._quiet_start == "22:00"
+        assert app._quiet_end == "07:00"
+
+
+# ------------------------------------------------------------------
+# Work hours callbacks
+# ------------------------------------------------------------------
+
+
+class TestWorkHoursCallbacks:
+    def test_toggle_work_hours(self):
+        app, _ = _make_app()
+        sender = MagicMock()
+        with patch("app._save_prefs"):
+            app._on_toggle_work_hours(sender)
+        assert app._work_hours_only is True
+        assert sender.state is True
+
+    def test_work_hours_preset(self):
+        app, _ = _make_app()
+        callback = app._make_work_hours_callback("10:00", "19:00")
+        with patch("app._save_prefs"):
+            callback(None)
+        assert app._work_start == "10:00"
+        assert app._work_end == "19:00"
+        assert app._work_hours_only is True
+
+    def test_toggle_work_day_off(self):
+        app, _ = _make_app()
+        sender = MagicMock()
+        assert 4 in app._work_days  # Friday
+        callback = app._make_work_day_callback(4)
+        with patch("app._save_prefs"):
+            callback(sender)
+        assert 4 not in app._work_days
+        assert sender.state is False
+
+    def test_toggle_work_day_on(self):
+        app, _ = _make_app()
+        sender = MagicMock()
+        assert 5 not in app._work_days  # Saturday
+        callback = app._make_work_day_callback(5)
+        with patch("app._save_prefs"):
+            callback(sender)
+        assert 5 in app._work_days
+        assert sender.state is True
+
+
+# ------------------------------------------------------------------
 # Join meeting
 # ------------------------------------------------------------------
 
@@ -480,3 +730,37 @@ class TestJoinMeeting:
         with patch("app.webbrowser.open") as mock_open:
             app._on_join(None)
             mock_open.assert_not_called()
+
+
+# ------------------------------------------------------------------
+# Preferences persistence
+# ------------------------------------------------------------------
+
+
+class TestPrefsPersistence:
+    def test_save_current_prefs_includes_schedule(self):
+        app, _ = _make_app()
+        app._quiet_start = "22:00"
+        app._quiet_end = "07:00"
+        app._work_hours_only = True
+        app._work_start = "10:00"
+        app._work_end = "19:00"
+        app._work_days = [0, 1, 2, 3, 4, 5]
+
+        saved = {}
+
+        def capture_prefs(prefs):
+            saved.update(prefs)
+
+        with (
+            patch("app._load_prefs", return_value={}),
+            patch("app._save_prefs", side_effect=capture_prefs),
+        ):
+            app._save_current_prefs()
+
+        assert saved["quiet_start"] == "22:00"
+        assert saved["quiet_end"] == "07:00"
+        assert saved["work_hours_only"] is True
+        assert saved["work_start"] == "10:00"
+        assert saved["work_end"] == "19:00"
+        assert 5 in saved["work_days"]

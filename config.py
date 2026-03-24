@@ -27,3 +27,23 @@ VOLUME_PRESETS = {
     "Medium": 0.6,
     "Full": 1.0,
 }
+
+# Allowed audio file extensions for import
+ALLOWED_AUDIO_EXTENSIONS = (".mp3", ".wav", ".ogg", ".m4a")
+
+# Display timing
+URGENT_SECONDS = 10  # red indicator in last N seconds
+LIVE_TIMEOUT_SECONDS = 120  # keep "is live!" for 2 min after start
+
+# Schedule defaults
+DEFAULT_WORK_START = "09:00"
+DEFAULT_WORK_END = "18:00"
+DEFAULT_WORK_DAYS = [0, 1, 2, 3, 4]  # Mon-Fri (0=Monday)
+
+# Snooze duration options in minutes
+SNOOZE_OPTIONS = {
+    "30 minutes": 30,
+    "1 hour": 60,
+    "2 hours": 120,
+    "Until tomorrow": 0,  # sentinel — computed dynamically
+}
