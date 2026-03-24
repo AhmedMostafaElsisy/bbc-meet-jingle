@@ -1,7 +1,9 @@
 from setuptools import setup
 
 APP = ["app.py"]
-DATA_FILES = [("assets", ["assets/bbc_news_theme.mp3"])]
+DATA_FILES = [
+    ("assets", ["assets/bbc_news_theme.mp3", "assets/netflix.mp3", "assets/icon.png"]),
+]
 OPTIONS = {
     "argv_emulation": False,
     "iconfile": None,
@@ -11,7 +13,8 @@ OPTIONS = {
         "CFBundleIdentifier": "com.user.bbcmeetjingle",
         "CFBundleVersion": "1.0.0",
     },
-    "packages": ["pygame", "googleapiclient", "google_auth_oauthlib"],
+    "packages": ["pygame", "googleapiclient", "google_auth_oauthlib", "pyobjc"],
+    "includes": ["schedule"],
 }
 
 setup(
