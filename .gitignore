@@ -1,0 +1,37 @@
+# Secrets & tokens
+credentials.json
+token.json
+
+# User preferences
+prefs.json
+
+# Audio files (user-provided)
+assets/bbc_news_theme.mp3
+assets/netflix.mp3
+assets/custom/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Testing
+.coverage
+.pytest_cache/
+htmlcov/
+
+# macOS
+.DS_Store
+
+# Claude
+.claude/
