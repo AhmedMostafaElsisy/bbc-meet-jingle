@@ -5,9 +5,7 @@ token.json
 # User preferences
 prefs.json
 
-# Audio files (user-provided)
-assets/bbc_news_theme.mp3
-assets/netflix.mp3
+# User-added custom jingles
 assets/custom/
 
 # Python
