@@ -441,6 +441,10 @@ class BBCMeetJingleApp(rumps.App):
         tick_count = 0
         while True:
             try:
+                # Auto-detect credentials.json if added after launch
+                if self._credentials is None and tick_count % POLL_INTERVAL_SECONDS == 0:
+                    self._try_load_credentials()
+
                 if tick_count % POLL_INTERVAL_SECONDS == 0:
                     self._poll_calendar()
                 self._tick()
